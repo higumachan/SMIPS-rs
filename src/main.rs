@@ -13,6 +13,79 @@ struct MIP<T: num::Float> {
     integer_flag: Vec<bool>,
 }
 
+impl<T: num::Float> MIP<T> {
+    pub fn solve() {
+
+    }
+
+    fn build_simplex_module_step1(&self) -> SimplexModule<T> {
+        let mut s_count = 0usize;
+        let mut a_count = 0usize;
+
+
+        for i in 0..self.equation_count {
+            if self.equation_compare[i] == Ordering::Equal {
+                a_count += 1;
+            }
+            else {
+                s_count += 1;
+                if (self.equation_right[i] < T::zero() && self.equation_compare[i] == Ordering::Less) ||
+                    (self.equation_right[i] >= T::zero() && self.equation_compare[i] == Ordering::Greater) {
+                    a_count += 1;
+                }
+            }
+        }
+
+
+        let mut table: Vec<Vec<T>> = vec![];
+        let mut s_idx = 0;
+        let mut a_idx = 0;
+
+
+        for i in 0..self.equation_count {
+            table.push(self.equation_left[i].clone());
+            let row = table.last_mut().unwrap();
+            row.append(&mut vec![T::zero(); s_count + a_count]);
+            if self.equation_compare[i] == Ordering::Equal {
+                row[self.variable_count + s_count + a_idx] = T::one();
+                a_idx += 1;
+            }
+            else {
+                row[self.variable_count + s_idx] = if self.equation_compare[i] == Ordering::Less { T::one() } else { T::one().neg() };
+                s_idx += 1;
+
+                if (self.equation_right[i] < T::zero() && self.equation_compare[i] == Ordering::Less) ||
+                    (self.equation_right[i] >= T::zero() && self.equation_compare[i] == Ordering::Greater) {
+                    row[self.variable_count + s_count + a_idx] = T::one();
+                    a_idx += 1;
+                }
+            }
+        }
+
+
+        let mut right_coef = self.equation_right.clone();
+
+        let mut t = vec![T::zero(); self.variable_count + s_count + a_count];
+
+        let mut right_coef_z = T::zero();
+        let col_count = self.variable_count + s_count + a_count;
+        for row in 0..(s_count) {
+            if table[row][(self.variable_count + s_count)..col_count].iter().any(|x| !x.is_zero()) {
+                for col in 0..(self.variable_count + s_count) {
+                    t[col] = t[col] - table[row][col];
+                }
+                right_coef_z = right_coef_z - right_coef[row];
+            }
+        }
+        right_coef.push(right_coef_z);
+
+        table.push(t);
+
+        let z_index = table.len() - 1;
+        SimplexModule::new(table, right_coef, z_index)
+    }
+}
+
 
 struct SimplexModule<T: num::Float> {
     table: Vec<Vec<T>>,
@@ -21,6 +94,7 @@ struct SimplexModule<T: num::Float> {
     base_variables: Vec<Option<usize>>,
 }
 
+#[derive(Debug)]
 enum SolveState {
     Optimal,
     Infeasible,
@@ -100,4 +174,23 @@ fn main() {
     sm.solve();
 
     println!("{:?}", sm);
+
+    let mut mip = MIP {
+        variable_count: 2,
+        equation_count: 3,
+        objective_coef: vec![5.0, 4.0],
+        equation_left: vec![
+            vec![1.5, 3.0],
+            vec![3.0, 1.0],
+            vec![1.0, 2.0],
+        ],
+        equation_compare: vec![Ordering::Less, Ordering::Less, Ordering::Greater],
+        equation_right: vec![ 13.5, 10.0, 7.0 ],
+        integer_flag: vec![true, true],
+    };
+    let mut t = mip.build_simplex_module_step1();
+    println!("{:?} {:?}", t.table, t.right_coef);
+    let st = t.solve();
+    println!("{:?}", st);
+    println!("{:?}", t);
 }
