@@ -116,10 +116,11 @@ impl<T: num::Float> SimplexModule<T> {
     fn solve(&mut self) -> SolveState {
         while let Some(col_idx) = self.table[self.z_index].iter().enumerate().filter(|x| x.1 < &T::zero()).next().map(|x|x.0) {
             let row_idx = self.table.iter()
-                .map(|x| if x[col_idx].is_zero() { T::infinity() } else { self.right_coef[col_idx] / x[col_idx] })
                 .enumerate()
+                .map(|x| (x.0, if x.1[col_idx].is_zero() { T::infinity() } else { self.right_coef[x.0] / x.1[col_idx] }))
                 .filter(|x| x.0 != self.z_index)
-                .min_by(|x, y| x.1.partial_cmp(&y.1).unwrap_or(Ordering::Equal)).map(|x| x.0);
+                .min_by(|x, y| x.1.partial_cmp(&y.1).unwrap_or(Ordering::Equal))
+                .map(|x| x.0);
             if row_idx.is_none() {
                 return SolveState::Infeasible;
             }
@@ -135,7 +136,12 @@ impl<T: num::Float> SimplexModule<T> {
                 }
 
                 let coef = self.table[i][col_idx];
-                self.table[i] = self.table[i].iter().zip(self.table[row_idx].clone()).map(|x| *x.0 - (coef * x.1)).collect();
+                self.table[i] = self.table[i]
+                    .iter()
+                    .zip(self.table[row_idx].clone())
+                    .map(|x| *x.0 - (coef * x.1))
+                    //.map(|x| if x.abs() > T::epsilon() { x } else { T::zero() })
+                    .collect();
                 self.right_coef[i] = self.right_coef[i] - coef * self.right_coef[row_idx];
             }
 
@@ -193,4 +199,5 @@ fn main() {
     let st = t.solve();
     println!("{:?}", st);
     println!("{:?}", t);
+    println!("{:?} {:?}", t.table, t.right_coef);
 }
