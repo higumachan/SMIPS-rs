@@ -3,34 +3,169 @@ use num::{Num, range};
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 
-struct MIP<T: num::Float> {
-    variable_count: usize,
-    equation_count: usize,
-    objective_coef: Vec<T>,
-    equation_left: Vec<Vec<T>>,
-    equation_compare: Vec<Ordering>,
-    equation_right: Vec<T>,
-    integer_flag: Vec<bool>,
+struct Equation<F: num::Float> {
+
+    // left_coefs[0] * x0 + left_coefs[1] * x1 ... left_coefs[n-1] * xn-1  < right
+    left_coefs: Vec<F>,
+    right: F,
+    compare: Ordering,
 }
 
-#[derive(Debug)]
-struct Solution<T: num::Float> {
+#[derive(Default)]
+struct MIP<F: num::Float + Default, I: num::Integer + Default> {
+    variable_count: usize,
+    equation_count: usize,
+    objective_coef: Vec<F>,
+    equation_left: Vec<Vec<F>>,
+    equation_compare: Vec<Ordering>,
+    equation_right: Vec<F>,
+    integer_flag: Vec<bool>,
+
+    phantom_data: I,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+struct LPSolution<T: num::Float> {
     variables: Vec<T>,
     objective: T,
 }
 
-impl<T: num::Float> MIP<T> {
-    pub fn solve(&self) -> Solution<T>{
-        let (mut sm, slack_count, artificial_count) = self.build_simplex_module_step1();
-        sm.solve();
-        self.transform_simplex_module_step2(&mut sm, slack_count, artificial_count);
-        sm.solve();
+#[derive(PartialEq)]
+struct IPSolution<F: num::Float, I: num::Integer> {
+    variables: Vec<I>,
+    objective: F,
+}
 
-        self.build_solution(&sm)
+enum SolveStateIP<F: num::Float, I: num::Integer> {
+    Optimal(IPSolution<F, I>),
+    Infeasible,
+}
+
+#[derive(PartialEq, Clone)]
+enum SolveStateLP<F :num::Float> {
+    Optimal(LPSolution<F>),
+    Infeasible,
+}
+
+enum Direction {
+    Left,
+    Right,
+}
+
+impl<F: num::Float> PartialOrd for SolveStateLP<F> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match (self, other) {
+            (SolveStateLP::Infeasible, SolveStateLP::Infeasible) => None,
+            (SolveStateLP::Optimal(_), SolveStateLP::Infeasible) => Some(Ordering::Greater),
+            (SolveStateLP::Infeasible, SolveStateLP::Optimal(_)) => Some(Ordering::Less),
+            (SolveStateLP::Optimal(a), SolveStateLP::Optimal(b)) => a.objective.partial_cmp(&b.objective),
+        }
+    }
+}
+
+impl<F: num::Float> SolveStateLP<F> {
+    pub fn solution(&self) -> &LPSolution<F> {
+        match self {
+            SolveStateLP::Optimal(r) => r,
+            SolveStateLP::Infeasible => panic!(),
+        }
     }
 
-    fn build_solution(&self, simplex_module: &SimplexModule<T>) -> Solution<T> {
-        let mut variables = vec![T::zero(); self.variable_count];
+    pub fn is_integer_condition(&self) -> bool {
+        match self {
+            SolveStateLP::Infeasible => false,
+            SolveStateLP::Optimal(r) => r.variables.iter().all(|x| is_integer(*x)),
+        }
+    }
+}
+
+fn is_integer<F: num::Float>(f: F) -> bool {
+    (f - f.round()) < F::epsilon()
+}
+
+impl<F: num::Float + Default, I: num::Integer + Default> MIP<F, I> {
+    pub fn solve(&self) -> SolveStateLP<F> {
+        SolveStateLP::Infeasible
+    }
+
+    fn branch_bound(&self, provisional: &SolveStateLP<F>) -> SolveStateLP<F> {
+        let answer_lp = self.solve_lp();
+
+        if answer_lp == SolveStateLP::Infeasible {
+            return provisional.clone();
+        }
+
+        if answer_lp.partial_cmp(provisional) == Some(Ordering::Less) {
+            return provisional.clone();
+        }
+
+        if answer_lp.is_integer_condition() {
+            return answer_lp;
+        }
+
+        let (branch_right, branch_left) = self.make_branches(answer_lp.solution()).unwrap();
+        let right_provisional = branch_right.branch_bound(provisional);
+
+        branch_left.branch_bound(provisional)
+    }
+
+    fn make_branches(&self, solution: &LPSolution<F>) -> Option<(Self, Self)> {
+        solution.variables
+            .iter()
+            .zip(self.integer_flag.iter())
+            .enumerate()
+            .filter(|(i, (v, is_int))| **is_int && !is_integer(**v))
+            .map(|(i, (v, is_integer))| i)
+            .next()
+            .map(|branch_variable_idx| {
+                let mut left_branch = MIP::default();
+                **self.clone_into(&mut left_branch);
+
+                left_branch.add_equation_with_variable_index(branch_variable_idx, solution.variables[branch_variable_idx].floor(), Ordering::Less);
+                (
+                    //*(self.clone().add_equation_with_variable_index(branch_variable_idx, solution.variables[branch_variable_idx].floor(), Ordering::Less)),
+                    //*(self.clone().add_equation_with_variable_index(branch_variable_idx, solution.variables[branch_variable_idx].ceil(), Ordering::Greater)),
+                    left_branch,
+                    left_branch,
+                )
+            })
+    }
+
+    pub fn add_equation(&mut self, equation_left: Vec<F>, equation_right: F, equation_compare: Ordering) -> &Self {
+        self.equation_count += 1;
+        self.equation_left.push(equation_left);
+        self.equation_right.push(equation_right);
+        self.equation_compare.push(equation_compare);
+        self
+    }
+
+    pub fn add_equation_with_variable_index(&mut self, variable_index: usize, equation_right: F, equation_compare: Ordering) -> &Self {
+        let equation_left = vec![F::zero(); self.variable_count];
+        self.add_equation(equation_left, equation_right, equation_compare)
+    }
+
+    pub fn solve_lp(&self) -> SolveStateLP<F> {
+        let (mut sm, slack_count, artificial_count) = self.build_simplex_module_step1();
+        let st = sm.solve();
+
+        if let SolveState::Infeasible = st {
+            return SolveStateLP::Infeasible;
+        }
+
+        self.transform_simplex_module_step2(&mut sm, slack_count, artificial_count);
+        let st = sm.solve();
+
+        match st {
+            SolveState::Infeasible => return SolveStateLP::Infeasible,
+            _ => {},
+        }
+
+
+        SolveStateLP::Optimal(self.build_solution(&sm))
+    }
+
+    fn build_solution(&self, simplex_module: &SimplexModule<F>) -> LPSolution<F> {
+        let mut variables = vec![F::zero(); self.variable_count];
 
         for i in 0..self.equation_count {
             if 0 <= simplex_module.base_variables[i] && simplex_module.base_variables[i] < self.variable_count {
@@ -38,10 +173,10 @@ impl<T: num::Float> MIP<T> {
             }
         }
 
-        Solution { variables, objective: simplex_module.right_coef[simplex_module.z_index] }
+        LPSolution { variables, objective: simplex_module.right_coef[simplex_module.z_index] }
     }
 
-    fn build_simplex_module_step1(&self) -> (SimplexModule<T>, usize, usize) {
+    fn build_simplex_module_step1(&self) -> (SimplexModule<F>, usize, usize) {
         let mut s_count = 0usize;
         let mut a_count = 0usize;
 
@@ -52,15 +187,15 @@ impl<T: num::Float> MIP<T> {
             }
             else {
                 s_count += 1;
-                if (self.equation_right[i] < T::zero() && self.equation_compare[i] == Ordering::Less) ||
-                    (self.equation_right[i] >= T::zero() && self.equation_compare[i] == Ordering::Greater) {
+                if (self.equation_right[i] < F::zero() && self.equation_compare[i] == Ordering::Less) ||
+                    (self.equation_right[i] >= F::zero() && self.equation_compare[i] == Ordering::Greater) {
                     a_count += 1;
                 }
             }
         }
 
 
-        let mut table: Vec<Vec<T>> = vec![];
+        let mut table: Vec<Vec<F>> = vec![];
         let mut s_idx = 0;
         let mut a_idx = 0;
         let mut base_variables = vec![];
@@ -69,20 +204,20 @@ impl<T: num::Float> MIP<T> {
         for i in 0..self.equation_count {
             table.push(self.equation_left[i].clone());
             let row = table.last_mut().unwrap();
-            row.append(&mut vec![T::zero(); s_count + a_count]);
+            row.append(&mut vec![F::zero(); s_count + a_count]);
             if self.equation_compare[i] == Ordering::Equal {
                 let idx = self.variable_count + s_count + a_idx;
-                row[idx] = T::one();
+                row[idx] = F::one();
                 base_variables.push(idx);
                 a_idx += 1;
             }
             else {
-                row[self.variable_count + s_idx] = if self.equation_compare[i] == Ordering::Less { T::one() } else { T::one().neg() };
+                row[self.variable_count + s_idx] = if self.equation_compare[i] == Ordering::Less { F::one() } else { F::one().neg() };
                 s_idx += 1;
 
-                if (self.equation_right[i] < T::zero() && self.equation_compare[i] == Ordering::Less) ||
-                    (self.equation_right[i] >= T::zero() && self.equation_compare[i] == Ordering::Greater) {
-                    row[self.variable_count + s_count + a_idx] = T::one();
+                if (self.equation_right[i] < F::zero() && self.equation_compare[i] == Ordering::Less) ||
+                    (self.equation_right[i] >= F::zero() && self.equation_compare[i] == Ordering::Greater) {
+                    row[self.variable_count + s_count + a_idx] = F::one();
                     base_variables.push(self.variable_count + s_count + a_idx);
                     a_idx += 1;
                 }
@@ -95,9 +230,9 @@ impl<T: num::Float> MIP<T> {
 
         let mut right_coef = self.equation_right.clone();
 
-        let mut t = vec![T::zero(); self.variable_count + s_count + a_count];
+        let mut t = vec![F::zero(); self.variable_count + s_count + a_count];
 
-        let mut right_coef_z = T::zero();
+        let mut right_coef_z = F::zero();
         let col_count = self.variable_count + s_count + a_count;
         for row in 0..(s_count) {
             if table[row][(self.variable_count + s_count)..col_count].iter().any(|x| !x.is_zero()) {
@@ -116,11 +251,11 @@ impl<T: num::Float> MIP<T> {
         (SimplexModule::new(table, right_coef, z_index, base_variables), s_count, a_count)
     }
 
-    fn transform_simplex_module_step2(&self, simplex_module: &mut SimplexModule<T>, slack_count: usize, artificial_count: usize) {
+    fn transform_simplex_module_step2(&self, simplex_module: &mut SimplexModule<F>, slack_count: usize, artificial_count: usize) {
         for j in 0..(self.variable_count + slack_count) {
-            simplex_module.table[simplex_module.z_index][j] = T::zero();
+            simplex_module.table[simplex_module.z_index][j] = F::zero();
         }
-        simplex_module.right_coef[simplex_module.z_index] = T::zero();
+        simplex_module.right_coef[simplex_module.z_index] = F::zero();
         for j in 0..self.variable_count {
             simplex_module.table[simplex_module.z_index][j] = -self.objective_coef[j];
         }
@@ -133,7 +268,7 @@ impl<T: num::Float> MIP<T> {
 
             }
             else {
-                simplex_module.right_coef[simplex_module.z_index] = simplex_module.right_coef[simplex_module.z_index] + -T::one() * simplex_module.right_coef[i];
+                simplex_module.right_coef[simplex_module.z_index] = simplex_module.right_coef[simplex_module.z_index] + -F::one() * simplex_module.right_coef[i];
             }
         }
 
@@ -146,7 +281,7 @@ impl<T: num::Float> MIP<T> {
 
                 }
                 else {
-                    simplex_module.table[simplex_module.z_index][j] = simplex_module.table[simplex_module.z_index][j] + -T::one() * simplex_module.table[i][j];
+                    simplex_module.table[simplex_module.z_index][j] = simplex_module.table[simplex_module.z_index][j] + -F::one() * simplex_module.table[i][j];
                 }
             }
         }
@@ -247,7 +382,10 @@ fn main() {
         equation_compare: vec![Ordering::Less, Ordering::Less, Ordering::Greater],
         equation_right: vec![ 13.5, 10.0, 7.0 ],
         integer_flag: vec![true, true],
+        phantom_data: 0,
     };
-    let solution = mip.solve();
-    println!("{:?}", solution);
+    let st = mip.solve_lp();
+    if let SolveStateLP::Optimal(solution) = st {
+        println!("{:?}", solution);
+    }
 }
