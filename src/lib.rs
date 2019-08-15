@@ -12,7 +12,7 @@ struct Equation<F: num::Float> {
 
 #[derive(Clone)]
 struct MIP<F: num::Float> {
-    objective_coef: Vec<F>,
+    objective_coefs: Vec<F>,
     equations: Vec<Equation<F>>,
     integer_flag: Vec<bool>,
 }
@@ -246,12 +246,12 @@ impl<F: num::Float> MIP<F> {
         }
         simplex_module.right_coef[simplex_module.z_index] = F::zero();
         for j in 0..self.variable_count() {
-            simplex_module.table[simplex_module.z_index][j] = -self.objective_coef[j];
+            simplex_module.table[simplex_module.z_index][j] = -self.objective_coefs[j];
         }
 
         for i in 0..self.equation_count() {
             if simplex_module.base_variables[i] < self.variable_count() {
-                simplex_module.right_coef[simplex_module.z_index] = simplex_module.right_coef[simplex_module.z_index] + self.objective_coef[simplex_module.base_variables[i]] * simplex_module.right_coef[i];
+                simplex_module.right_coef[simplex_module.z_index] = simplex_module.right_coef[simplex_module.z_index] + self.objective_coefs[simplex_module.base_variables[i]] * simplex_module.right_coef[i];
             }
             else if simplex_module.base_variables[i] < self.variable_count() + slack_count {
 
@@ -264,7 +264,7 @@ impl<F: num::Float> MIP<F> {
         for j in 0..(self.variable_count() + slack_count) {
             for i in 0..self.equation_count() {
                 if simplex_module.base_variables[i] < self.variable_count() {
-                    simplex_module.table[simplex_module.z_index][j] = simplex_module.table[simplex_module.z_index][j] + self.objective_coef[simplex_module.base_variables[i]] * simplex_module.table[i][j];
+                    simplex_module.table[simplex_module.z_index][j] = simplex_module.table[simplex_module.z_index][j] + self.objective_coefs[simplex_module.base_variables[i]] * simplex_module.table[i][j];
                 }
                 else if simplex_module.base_variables[i] < self.variable_count() + slack_count {
 
@@ -286,7 +286,7 @@ impl<F: num::Float> MIP<F> {
     }
 
     pub fn variable_count(&self) -> usize {
-        self.objective_coef.len()
+        self.objective_coefs.len()
     }
 }
 
@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn solve_lp() {
         let mut mip = MIP {
-            objective_coef: vec![5.0, 4.0],
+            objective_coefs: vec![5.0, 4.0],
             equations: vec![
                 Equation{left_coefs: vec![1.5, 3.0], right: 13.5, compare: Ordering::Less},
                 Equation{left_coefs: vec![3.0, 1.0], right: 10.0, compare: Ordering::Less},
@@ -390,7 +390,7 @@ mod tests {
     #[test]
     fn solve_mip1() {
         let mut mip = MIP {
-            objective_coef: vec![100.0, 4.0],
+            objective_coefs: vec![100.0, 4.0],
             equations: vec![
                 Equation{left_coefs: vec![1.0, 1.0], right: 1.0, compare: Ordering::Equal},
                 Equation{left_coefs: vec![1.0, 0.0], right: 1.0, compare: Ordering::Less},
@@ -408,7 +408,7 @@ mod tests {
     #[test]
     fn solve_mip2() {
         let mut mip = MIP {
-            objective_coef: vec![100.0, 400.0],
+            objective_coefs: vec![100.0, 400.0],
             equations: vec![
                 Equation{left_coefs: vec![1.0, 1.0], right: 1.0, compare: Ordering::Equal},
                 Equation{left_coefs: vec![1.0, 0.0], right: 1.0, compare: Ordering::Less},
