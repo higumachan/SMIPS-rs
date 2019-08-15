@@ -3,16 +3,9 @@ use num::{Num, range};
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 
-struct Equation<F: num::Float> {
 
-    // left_coefs[0] * x0 + left_coefs[1] * x1 ... left_coefs[n-1] * xn-1  < right
-    left_coefs: Vec<F>,
-    right: F,
-    compare: Ordering,
-}
-
-#[derive(Default)]
-struct MIP<F: num::Float + Default, I: num::Integer + Default> {
+#[derive(Clone, Default)]
+struct MIP<F: num::Float + Default> {
     variable_count: usize,
     equation_count: usize,
     objective_coef: Vec<F>,
@@ -20,8 +13,6 @@ struct MIP<F: num::Float + Default, I: num::Integer + Default> {
     equation_compare: Vec<Ordering>,
     equation_right: Vec<F>,
     integer_flag: Vec<bool>,
-
-    phantom_data: I,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -71,10 +62,10 @@ impl<F: num::Float> SolveStateLP<F> {
         }
     }
 
-    pub fn is_integer_condition(&self) -> bool {
+    pub fn is_integer_condition(&self, integer_flags: &Vec<bool>) -> bool {
         match self {
             SolveStateLP::Infeasible => false,
-            SolveStateLP::Optimal(r) => r.variables.iter().all(|x| is_integer(*x)),
+            SolveStateLP::Optimal(r) => r.variables.iter().zip(integer_flags).all(|(x, integer_flag)| !*integer_flag || is_integer(*x)),
         }
     }
 }
@@ -83,9 +74,9 @@ fn is_integer<F: num::Float>(f: F) -> bool {
     (f - f.round()) < F::epsilon()
 }
 
-impl<F: num::Float + Default, I: num::Integer + Default> MIP<F, I> {
+impl<F: num::Float + Default> MIP<F> {
     pub fn solve(&self) -> SolveStateLP<F> {
-        SolveStateLP::Infeasible
+        self.branch_bound(&SolveStateLP::Infeasible)
     }
 
     fn branch_bound(&self, provisional: &SolveStateLP<F>) -> SolveStateLP<F> {
@@ -99,7 +90,7 @@ impl<F: num::Float + Default, I: num::Integer + Default> MIP<F, I> {
             return provisional.clone();
         }
 
-        if answer_lp.is_integer_condition() {
+        if answer_lp.is_integer_condition(&self.integer_flag) {
             return answer_lp;
         }
 
@@ -118,15 +109,14 @@ impl<F: num::Float + Default, I: num::Integer + Default> MIP<F, I> {
             .map(|(i, (v, is_integer))| i)
             .next()
             .map(|branch_variable_idx| {
-                let mut left_branch = MIP::default();
-                **self.clone_into(&mut left_branch);
+                let mut left_branch = self.clone();
+                let mut right_branch = self.clone();
 
                 left_branch.add_equation_with_variable_index(branch_variable_idx, solution.variables[branch_variable_idx].floor(), Ordering::Less);
+                right_branch.add_equation_with_variable_index(branch_variable_idx, solution.variables[branch_variable_idx].ceil(), Ordering::Greater);
                 (
-                    //*(self.clone().add_equation_with_variable_index(branch_variable_idx, solution.variables[branch_variable_idx].floor(), Ordering::Less)),
-                    //*(self.clone().add_equation_with_variable_index(branch_variable_idx, solution.variables[branch_variable_idx].ceil(), Ordering::Greater)),
                     left_branch,
-                    left_branch,
+                    right_branch,
                 )
             })
     }
@@ -381,10 +371,49 @@ fn main() {
         ],
         equation_compare: vec![Ordering::Less, Ordering::Less, Ordering::Greater],
         equation_right: vec![ 13.5, 10.0, 7.0 ],
-        integer_flag: vec![true, true],
-        phantom_data: 0,
+        integer_flag: vec![false, false],
     };
-    let st = mip.solve_lp();
+    let st = mip.solve();
+    if let SolveStateLP::Optimal(solution) = st {
+        println!("{:?}", solution);
+    }
+
+    let mut mip = MIP {
+        variable_count: 2,
+        equation_count: 5,
+        objective_coef: vec![100.0, 4.0],
+        equation_left: vec![
+            vec![1.0, 1.0],
+            vec![1.0, 0.0],
+            vec![1.0, 0.0],
+            vec![0.0, 1.0],
+            vec![0.0, 1.0],
+        ],
+        equation_compare: vec![Ordering::Equal, Ordering::Less, Ordering::Greater, Ordering::Less, Ordering::Greater],
+        equation_right: vec![ 1.0, 1.0, 0.0, 1.0, 0.0 ],
+        integer_flag: vec![false, false],
+    };
+    let st = mip.solve();
+    if let SolveStateLP::Optimal(solution) = st {
+        println!("{:?}", solution);
+    }
+
+    let mut mip = MIP {
+        variable_count: 2,
+        equation_count: 5,
+        objective_coef: vec![100.0, 400.0],
+        equation_left: vec![
+            vec![1.0, 1.0],
+            vec![1.0, 0.0],
+            vec![1.0, 0.0],
+            vec![0.0, 1.0],
+            vec![0.0, 1.0],
+        ],
+        equation_compare: vec![Ordering::Equal, Ordering::Less, Ordering::Greater, Ordering::Less, Ordering::Greater],
+        equation_right: vec![ 1.0, 1.0, 0.0, 1.0, 0.0 ],
+        integer_flag: vec![false, false],
+    };
+    let st = mip.solve();
     if let SolveStateLP::Optimal(solution) = st {
         println!("{:?}", solution);
     }
