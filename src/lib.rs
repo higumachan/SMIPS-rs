@@ -1,13 +1,12 @@
 use std::cmp::Ordering;
-use num::{Num, range};
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 
 
-#[derive(Clone, Default)]
-struct MIP<F: num::Float + Default> {
-    variable_count: usize,
-    equation_count: usize,
+struct Equation<F: num::Float>
+
+#[derive(Clone)]
+struct MIP<F: num::Floatefault> {
     objective_coef: Vec<F>,
     equation_left: Vec<Vec<F>>,
     equation_compare: Vec<Ordering>,
@@ -32,7 +31,7 @@ enum SolveStateIP<F: num::Float, I: num::Integer> {
     Infeasible,
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 enum SolveStateLP<F :num::Float> {
     Optimal(LPSolution<F>),
     Infeasible,
@@ -74,7 +73,7 @@ fn is_integer<F: num::Float>(f: F) -> bool {
     (f - f.round()) < F::epsilon()
 }
 
-impl<F: num::Float + Default> MIP<F> {
+impl<F: num::Float> MIP<F> {
     pub fn solve(&self) -> SolveStateLP<F> {
         self.branch_bound(&SolveStateLP::Infeasible)
     }
@@ -122,7 +121,6 @@ impl<F: num::Float + Default> MIP<F> {
     }
 
     pub fn add_equation(&mut self, equation_left: Vec<F>, equation_right: F, equation_compare: Ordering) -> &Self {
-        self.equation_count += 1;
         self.equation_left.push(equation_left);
         self.equation_right.push(equation_right);
         self.equation_compare.push(equation_compare);
@@ -130,7 +128,7 @@ impl<F: num::Float + Default> MIP<F> {
     }
 
     pub fn add_equation_with_variable_index(&mut self, variable_index: usize, equation_right: F, equation_compare: Ordering) -> &Self {
-        let equation_left = vec![F::zero(); self.variable_count];
+        let equation_left = vec![F::zero(); self.variable_count()];
         self.add_equation(equation_left, equation_right, equation_compare)
     }
 
@@ -155,10 +153,10 @@ impl<F: num::Float + Default> MIP<F> {
     }
 
     fn build_solution(&self, simplex_module: &SimplexModule<F>) -> LPSolution<F> {
-        let mut variables = vec![F::zero(); self.variable_count];
+        let mut variables = vec![F::zero(); self.variable_count()];
 
-        for i in 0..self.equation_count {
-            if 0 <= simplex_module.base_variables[i] && simplex_module.base_variables[i] < self.variable_count {
+        for i in 0..self.equation_count() {
+            if 0 <= simplex_module.base_variables[i] && simplex_module.base_variables[i] < self.variable_count() {
                 variables[simplex_module.base_variables[i]] = simplex_module.right_coef[i];
             }
         }
@@ -171,7 +169,7 @@ impl<F: num::Float + Default> MIP<F> {
         let mut a_count = 0usize;
 
 
-        for i in 0..self.equation_count {
+        for i in 0..self.equation_count() {
             if self.equation_compare[i] == Ordering::Equal {
                 a_count += 1;
             }
@@ -191,28 +189,28 @@ impl<F: num::Float + Default> MIP<F> {
         let mut base_variables = vec![];
 
 
-        for i in 0..self.equation_count {
+        for i in 0..self.equation_count() {
             table.push(self.equation_left[i].clone());
             let row = table.last_mut().unwrap();
             row.append(&mut vec![F::zero(); s_count + a_count]);
             if self.equation_compare[i] == Ordering::Equal {
-                let idx = self.variable_count + s_count + a_idx;
+                let idx = self.variable_count() + s_count + a_idx;
                 row[idx] = F::one();
                 base_variables.push(idx);
                 a_idx += 1;
             }
             else {
-                row[self.variable_count + s_idx] = if self.equation_compare[i] == Ordering::Less { F::one() } else { F::one().neg() };
+                row[self.variable_count() + s_idx] = if self.equation_compare[i] == Ordering::Less { F::one() } else { F::one().neg() };
                 s_idx += 1;
 
                 if (self.equation_right[i] < F::zero() && self.equation_compare[i] == Ordering::Less) ||
                     (self.equation_right[i] >= F::zero() && self.equation_compare[i] == Ordering::Greater) {
-                    row[self.variable_count + s_count + a_idx] = F::one();
-                    base_variables.push(self.variable_count + s_count + a_idx);
+                    row[self.variable_count() + s_count + a_idx] = F::one();
+                    base_variables.push(self.variable_count() + s_count + a_idx);
                     a_idx += 1;
                 }
                 else {
-                    base_variables.push(self.variable_count + s_idx - 1);
+                    base_variables.push(self.variable_count() + s_idx - 1);
                 }
             }
         }
@@ -220,13 +218,13 @@ impl<F: num::Float + Default> MIP<F> {
 
         let mut right_coef = self.equation_right.clone();
 
-        let mut t = vec![F::zero(); self.variable_count + s_count + a_count];
+        let mut t = vec![F::zero(); self.variable_count() + s_count + a_count];
 
         let mut right_coef_z = F::zero();
-        let col_count = self.variable_count + s_count + a_count;
+        let col_count = self.variable_count() + s_count + a_count;
         for row in 0..(s_count) {
-            if table[row][(self.variable_count + s_count)..col_count].iter().any(|x| !x.is_zero()) {
-                for col in 0..(self.variable_count + s_count) {
+            if table[row][(self.variable_count() + s_count)..col_count].iter().any(|x| !x.is_zero()) {
+                for col in 0..(self.variable_count() + s_count) {
                     t[col] = t[col] - table[row][col];
                 }
                 right_coef_z = right_coef_z - right_coef[row];
@@ -242,19 +240,19 @@ impl<F: num::Float + Default> MIP<F> {
     }
 
     fn transform_simplex_module_step2(&self, simplex_module: &mut SimplexModule<F>, slack_count: usize, artificial_count: usize) {
-        for j in 0..(self.variable_count + slack_count) {
+        for j in 0..(self.variable_count() + slack_count) {
             simplex_module.table[simplex_module.z_index][j] = F::zero();
         }
         simplex_module.right_coef[simplex_module.z_index] = F::zero();
-        for j in 0..self.variable_count {
+        for j in 0..self.variable_count() {
             simplex_module.table[simplex_module.z_index][j] = -self.objective_coef[j];
         }
 
-        for i in 0..self.equation_count {
-            if simplex_module.base_variables[i] < self.variable_count {
+        for i in 0..self.equation_count() {
+            if simplex_module.base_variables[i] < self.variable_count() {
                 simplex_module.right_coef[simplex_module.z_index] = simplex_module.right_coef[simplex_module.z_index] + self.objective_coef[simplex_module.base_variables[i]] * simplex_module.right_coef[i];
             }
-            else if simplex_module.base_variables[i] < self.variable_count + slack_count {
+            else if simplex_module.base_variables[i] < self.variable_count() + slack_count {
 
             }
             else {
@@ -262,12 +260,12 @@ impl<F: num::Float + Default> MIP<F> {
             }
         }
 
-        for j in 0..(self.variable_count + slack_count) {
-            for i in 0..self.equation_count {
-                if simplex_module.base_variables[i] < self.variable_count {
+        for j in 0..(self.variable_count() + slack_count) {
+            for i in 0..self.equation_count() {
+                if simplex_module.base_variables[i] < self.variable_count() {
                     simplex_module.table[simplex_module.z_index][j] = simplex_module.table[simplex_module.z_index][j] + self.objective_coef[simplex_module.base_variables[i]] * simplex_module.table[i][j];
                 }
-                else if simplex_module.base_variables[i] < self.variable_count + slack_count {
+                else if simplex_module.base_variables[i] < self.variable_count() + slack_count {
 
                 }
                 else {
@@ -275,11 +273,19 @@ impl<F: num::Float + Default> MIP<F> {
                 }
             }
         }
-        for i in 0..self.equation_count+1 {
+        for i in 0..self.equation_count()+1 {
             for l in 0..artificial_count {
                 simplex_module.table[i].pop();
             }
         }
+    }
+
+    pub fn equation_count(&self) -> usize {
+        self.equation_left.len()
+    }
+
+    pub fn variable_count(&self) -> usize {
+        self.objective_coef.len()
     }
 }
 
@@ -358,63 +364,67 @@ impl Debug for SimplexModule<f64> {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::MIP;
+    use std::cmp::Ordering;
+    use crate::{SolveStateLP, LPSolution};
 
-fn main() {
-    let mut mip = MIP {
-        variable_count: 2,
-        equation_count: 3,
-        objective_coef: vec![5.0, 4.0],
-        equation_left: vec![
-            vec![1.5, 3.0],
-            vec![3.0, 1.0],
-            vec![1.0, 2.0],
-        ],
-        equation_compare: vec![Ordering::Less, Ordering::Less, Ordering::Greater],
-        equation_right: vec![ 13.5, 10.0, 7.0 ],
-        integer_flag: vec![false, false],
-    };
-    let st = mip.solve();
-    if let SolveStateLP::Optimal(solution) = st {
-        println!("{:?}", solution);
+    #[test]
+    fn solve_lp() {
+        let mut mip = MIP {
+            objective_coef: vec![5.0, 4.0],
+            equation_left: vec![
+                vec![1.5, 3.0],
+                vec![3.0, 1.0],
+                vec![1.0, 2.0],
+            ],
+            equation_compare: vec![Ordering::Less, Ordering::Less, Ordering::Greater],
+            equation_right: vec![ 13.5, 10.0, 7.0 ],
+            integer_flag: vec![false, false],
+        };
+        let st = mip.solve();
+
+        assert_eq!(SolveStateLP::Optimal(LPSolution{variables: vec![2.2000000000000006, 3.4], objective: 24.600000000000005}), st);
     }
 
-    let mut mip = MIP {
-        variable_count: 2,
-        equation_count: 5,
-        objective_coef: vec![100.0, 4.0],
-        equation_left: vec![
-            vec![1.0, 1.0],
-            vec![1.0, 0.0],
-            vec![1.0, 0.0],
-            vec![0.0, 1.0],
-            vec![0.0, 1.0],
-        ],
-        equation_compare: vec![Ordering::Equal, Ordering::Less, Ordering::Greater, Ordering::Less, Ordering::Greater],
-        equation_right: vec![ 1.0, 1.0, 0.0, 1.0, 0.0 ],
-        integer_flag: vec![false, false],
-    };
-    let st = mip.solve();
-    if let SolveStateLP::Optimal(solution) = st {
-        println!("{:?}", solution);
+    #[test]
+    fn solve_mip1() {
+        let mut mip = MIP {
+            objective_coef: vec![100.0, 4.0],
+            equation_left: vec![
+                vec![1.0, 1.0],
+                vec![1.0, 0.0],
+                vec![1.0, 0.0],
+                vec![0.0, 1.0],
+                vec![0.0, 1.0],
+            ],
+            equation_compare: vec![Ordering::Equal, Ordering::Less, Ordering::Greater, Ordering::Less, Ordering::Greater],
+            equation_right: vec![ 1.0, 1.0, 0.0, 1.0, 0.0 ],
+            integer_flag: vec![false, false],
+        };
+        let st = mip.solve();
+
+        assert_eq!(SolveStateLP::Optimal(LPSolution{variables: vec![1.0, 0.0], objective: 100.0}), st)
     }
 
-    let mut mip = MIP {
-        variable_count: 2,
-        equation_count: 5,
-        objective_coef: vec![100.0, 400.0],
-        equation_left: vec![
-            vec![1.0, 1.0],
-            vec![1.0, 0.0],
-            vec![1.0, 0.0],
-            vec![0.0, 1.0],
-            vec![0.0, 1.0],
-        ],
-        equation_compare: vec![Ordering::Equal, Ordering::Less, Ordering::Greater, Ordering::Less, Ordering::Greater],
-        equation_right: vec![ 1.0, 1.0, 0.0, 1.0, 0.0 ],
-        integer_flag: vec![false, false],
-    };
-    let st = mip.solve();
-    if let SolveStateLP::Optimal(solution) = st {
-        println!("{:?}", solution);
+    #[test]
+    fn solve_mip2() {
+        let mut mip = MIP {
+            objective_coef: vec![100.0, 400.0],
+            equation_left: vec![
+                vec![1.0, 1.0],
+                vec![1.0, 0.0],
+                vec![1.0, 0.0],
+                vec![0.0, 1.0],
+                vec![0.0, 1.0],
+            ],
+            equation_compare: vec![Ordering::Equal, Ordering::Less, Ordering::Greater, Ordering::Less, Ordering::Greater],
+            equation_right: vec![1.0, 1.0, 0.0, 1.0, 0.0],
+            integer_flag: vec![false, false],
+        };
+        let st = mip.solve();
+
+        assert_eq!(SolveStateLP::Optimal(LPSolution { variables: vec![0.0, 1.0], objective: 400.0 }), st)
     }
 }
