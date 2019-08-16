@@ -73,7 +73,7 @@ impl<F: num::Float> SolveStateLP<F> {
 }
 
 fn is_integer<F: num::Float>(f: F) -> bool {
-    (f - f.round()) < F::epsilon()
+    (f - f.floor()) < F::epsilon()
 }
 
 impl<F: num::Float> MIP<F> {
@@ -99,7 +99,7 @@ impl<F: num::Float> MIP<F> {
         let (branch_right, branch_left) = self.make_branches(answer_lp.solution()).unwrap();
         let right_provisional = branch_right.branch_bound(provisional);
 
-        branch_left.branch_bound(provisional)
+        branch_left.branch_bound(&right_provisional)
     }
 
     fn make_branches(&self, solution: &LPSolution<F>) -> Option<(Self, Self)> {
@@ -129,7 +129,8 @@ impl<F: num::Float> MIP<F> {
     }
 
     pub fn add_equation_with_variable_index(&mut self, variable_index: usize, equation_right: F, equation_compare: Ordering) -> &Self {
-        let left_coefs = vec![F::zero(); self.variable_count()];
+        let mut left_coefs = vec![F::zero(); self.variable_count()];
+        left_coefs[variable_index] = F::one();
         self.add_equation(Equation{ left_coefs, right: equation_right, compare: equation_compare })
     }
 
@@ -398,7 +399,7 @@ mod tests {
                 Equation{left_coefs: vec![0.0, 1.0], right: 1.0, compare: Ordering::Less},
                 Equation{left_coefs: vec![0.0, 1.0], right: 0.0, compare: Ordering::Greater},
             ],
-            integer_flag: vec![false, false],
+            integer_flag: vec![true, true],
         };
         let st = mip.solve();
 
@@ -416,10 +417,26 @@ mod tests {
                 Equation{left_coefs: vec![0.0, 1.0], right: 1.0, compare: Ordering::Less},
                 Equation{left_coefs: vec![0.0, 1.0], right: 0.0, compare: Ordering::Greater},
             ],
-            integer_flag: vec![false, false],
+            integer_flag: vec![true, true],
         };
         let st = mip.solve();
 
         assert_eq!(SolveStateLP::Optimal(LPSolution { variables: vec![0.0, 1.0], objective: 400.0 }), st)
+    }
+
+    #[test]
+    fn solve_mip3() {
+        let mut mip = MIP {
+            objective_coefs: vec![5.0, 4.0],
+            equations: vec![
+                Equation{left_coefs: vec![1.5, 3.0], right: 13.5, compare: Ordering::Less},
+                Equation{left_coefs: vec![3.0, 1.0], right: 10.0, compare: Ordering::Less},
+                Equation{left_coefs: vec![1.0, 2.0], right: 7.0, compare: Ordering::Greater},
+            ],
+            integer_flag: vec![true, true],
+        };
+        let st = mip.solve();
+
+        assert_eq!(SolveStateLP::Optimal(LPSolution{variables: vec![2.0, 3.0], objective: 22.0}), st);
     }
 }
